@@ -11,7 +11,7 @@ from utils.logger import get_logger
 
 def extract(cfg, log):
     gaussians: BaseModel = create_model(cfg.model_cfg, log, cfg.work_dir, cfg.debug)
-    (state_dict, start_iteration) = torch.load(cfg.resume_from)
+    (state_dict, start_iteration) = torch.load(cfg.resume_from, weights_only=False)
     gaussians.load_state_dict(state_dict, cfg.optim_cfg)    
     texture = gaussians.cube_map()
     texture = (torch.clamp(texture, 0, 1) * 255).detach().cpu().numpy().astype(np.uint8)

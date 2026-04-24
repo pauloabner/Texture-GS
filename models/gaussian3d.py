@@ -170,9 +170,31 @@ class Gaussian3D(BaseModel):
 
     def save_point_cloud(self, path):
         xyz = self._xyz.detach().cpu().numpy()
-        dtype_full = [(attribute, 'f4') for attribute in ['x', 'y', 'z']]
+        normals = np.zeros_like(xyz)
+        f_dc = self._features_dc.detach().flatten(start_dim=1).cpu().numpy()
+        f_rest = self._features_rest.detach().flatten(start_dim=1).cpu().numpy()
+        opacities = self._opacity.detach().cpu().numpy()
+        scale = self._scaling.detach().cpu().numpy()
+        rotation = self._rotation.detach().cpu().numpy()
+        lc = np.zeros((xyz.shape[0], 1))
+
+        l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
+        # Adiciona nomes das propriedades de SH (DC e Resto)
+        for i in range(f_dc.shape[1]):
+            l.append('f_dc_{}'.format(i))
+        for i in range(f_rest.shape[1]):
+            l.append('f_rest_{}'.format(i))
+        l.append('opacity')
+        for i in range(scale.shape[1]):
+            l.append('scale_{}'.format(i))
+        for i in range(rotation.shape[1]):
+            l.append('rot_{}'.format(i))
+        l.append('lc')
+
+        dtype_full = [(attribute, 'f4') for attribute in l]
+
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz,), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, lc), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)

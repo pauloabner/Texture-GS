@@ -40,7 +40,7 @@ class UVMapGaussian3D(BaseModel):
         self.scheduler_uv = None
         
     def initialize(self, pcd : BasicPointCloud, spatial_lr_scale : float):
-        (state_dict, _) = torch.load(self.cfg.init_from)
+        (state_dict, _) = torch.load(self.cfg.init_from, weights_only=False)
         (
             self._xyz,
             _,

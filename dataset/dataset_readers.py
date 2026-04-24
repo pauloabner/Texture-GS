@@ -104,8 +104,8 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, images_folder):
         else:
             img_mask = None
             
-        image = Image.fromarray(np.array(image*255.0, dtype=np.byte), "RGB")
-        alpha = Image.fromarray(np.array(np.tile(img_mask[..., np.newaxis],(1, 1, 3))*255.0, dtype=np.byte), "RGB") if img_mask is not None else None
+        image = Image.fromarray(np.array(image*255.0, dtype=np.uint8), "RGB")
+        alpha = Image.fromarray(np.array(np.tile(img_mask[..., np.newaxis],(1, 1, 3))*255.0, dtype=np.uint8), "RGB") if img_mask is not None else None
 
         cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
                               image_path=image_path, image_name=image_name, width=width, height=height, image_id=extr.id, alpha=alpha)
@@ -222,7 +222,7 @@ def readCamerasFromTransforms(path, transformsfile, background, extension=".png"
 
             norm_data = im_data / 255.0
             arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-            image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+            image = Image.fromarray(np.array(arr*255.0, dtype=np.uint8), "RGB")
 
             if os.path.exists(normal_path):
                 normal = Image.open(normal_path).convert('RGB')
@@ -235,7 +235,7 @@ def readCamerasFromTransforms(path, transformsfile, background, extension=".png"
                 normal_data = np.array(normal) * 2. / 255.0 - 1.
                 alpha = (np.linalg.norm(normal_data, ord=2, axis=2, keepdims=True) > 0.5)
                 alpha = np.tile(alpha, [1, 1, 3])
-                alpha = Image.fromarray(np.array(alpha*255.0, dtype=np.byte), "RGB")
+                alpha = Image.fromarray(np.array(alpha*255.0, dtype=np.uint8), "RGB")
             else:
                 alpha = None
             fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
@@ -433,10 +433,10 @@ def loadCamsFromScene(path, valid_list, background, debug):
             fovy = focal2fov(focal_length_y, image.shape[0])
             if int(index) in valid_list:
                 image *= img_mask[..., np.newaxis]
-                image = Image.fromarray(np.array(image*255.0, dtype=np.byte), "RGB")
-                alpha = Image.fromarray(np.array(np.tile(img_mask[..., np.newaxis],(1, 1, 3))*255.0, dtype=np.byte), "RGB")
+                image = Image.fromarray(np.array(image*255.0, dtype=np.uint8), "RGB")
+                alpha = Image.fromarray(np.array(np.tile(img_mask[..., np.newaxis],(1, 1, 3))*255.0, dtype=np.uint8), "RGB")
                 if normal is not None:
-                    normal = Image.fromarray(np.array((normal+1)/2*255.0, dtype=np.byte), "RGB")
+                    normal = Image.fromarray(np.array((normal+1)/2*255.0, dtype=np.uint8), "RGB")
                 test_cam_infos.append(CameraInfo(
                     uid=index, R=R, T=T, FovY=fovy, FovX=fovx, image=image,
                     image_path=image_path, image_name=image_name,
@@ -446,10 +446,10 @@ def loadCamsFromScene(path, valid_list, background, debug):
                 image *= img_mask[..., np.newaxis]
                 depth *= img_mask
                 normal *= img_mask[..., np.newaxis]
-                image = Image.fromarray(np.array(image*255.0, dtype=np.byte), "RGB")
-                alpha = Image.fromarray(np.array(np.tile(img_mask[..., np.newaxis],(1, 1, 3))*255.0, dtype=np.byte), "RGB")
+                image = Image.fromarray(np.array(image*255.0, dtype=np.uint8), "RGB")
+                alpha = Image.fromarray(np.array(np.tile(img_mask[..., np.newaxis],(1, 1, 3))*255.0, dtype=np.uint8), "RGB")
                 if normal is not None:
-                    normal = Image.fromarray(np.array((normal+1)/2*255.0, dtype=np.byte), "RGB")
+                    normal = Image.fromarray(np.array((normal+1)/2*255.0, dtype=np.uint8), "RGB")
                 train_cam_infos.append(CameraInfo(
                     uid=index, R=R, T=T, FovY=fovy, FovX=fovx, image=image,
                     image_path=image_path, image_name=image_name,

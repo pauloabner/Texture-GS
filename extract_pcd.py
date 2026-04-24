@@ -12,7 +12,7 @@ from utils.logger import get_logger
 
 def extract(cfg, log):
     gaussians: BaseModel = create_model(cfg.model_cfg, log, cfg.work_dir, cfg.debug)
-    (state_dict, start_iteration) = torch.load(cfg.resume_from)
+    (state_dict, start_iteration) = torch.load(cfg.resume_from, weights_only=False)
     gaussians.load_state_dict(state_dict, cfg.optim_cfg)    
     xyzs = gaussians.get_xyz
     if xyzs.shape[0] > cfg.num_points:
@@ -23,14 +23,7 @@ def extract(cfg, log):
     
     np.save(cfg.save_path, xyz)
     ply_save_path = cfg.save_path.replace('npy', 'ply')
-
-    dtype_full = [(attribute, 'f4') for attribute in ['x', 'y', 'z']]
-
-    elements = np.empty(xyz.shape[0], dtype=dtype_full)
-    attributes = np.concatenate((xyz,), axis=1)
-    elements[:] = list(map(tuple, attributes))
-    el = PlyElement.describe(elements, 'vertex')
-    PlyData([el]).write(ply_save_path)
+    gaussians.save_point_cloud(ply_save_path)
         
 
 def parse_args():

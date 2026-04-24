@@ -62,7 +62,7 @@ class TextureGaussian3D(BaseModel):
     def initialize(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
 
-        (state_dict, _) = torch.load(self.cfg.init_from)
+        (state_dict, _) = torch.load(self.cfg.init_from, weights_only=False)
         (
             self._xyz,
             _,
@@ -264,10 +264,32 @@ class TextureGaussian3D(BaseModel):
     @torch.no_grad()
     def save_point_cloud(self, path):
         xyz = self._xyz.detach().cpu().numpy()
-        dtype_full = [(attribute, 'f4') for attribute in ['x', 'y', 'z']]
+        normals = np.zeros_like(xyz)
+        # Texture-GS usa uma textura global para a cor base (DC),
+        # salvamos zeros para f_dc para manter compatibilidade com visualizadores.
+        f_dc = np.zeros((xyz.shape[0], 3))
+        f_rest = self._shs.detach().flatten(start_dim=1).cpu().numpy() if self._shs is not None else np.empty((xyz.shape[0], 0))
+        opacities = self._opacity.detach().cpu().numpy()
+        scale = self._scaling.detach().cpu().numpy()
+        rotation = self._rotation.detach().cpu().numpy()
+        lc = np.zeros((xyz.shape[0], 1))
+
+        l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
+        for i in range(f_dc.shape[1]):
+            l.append('f_dc_{}'.format(i))
+        for i in range(f_rest.shape[1]):
+            l.append('f_rest_{}'.format(i))
+        l.append('opacity')
+        for i in range(scale.shape[1]):
+            l.append('scale_{}'.format(i))
+        for i in range(rotation.shape[1]):
+            l.append('rot_{}'.format(i))
+        l.append('lc')
+
+        dtype_full = [(attribute, 'f4') for attribute in l]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz,), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, lc), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)  

@@ -41,7 +41,7 @@ def visualize(cfg, log):
     assert hasattr(gaussians, 'change_texture')
     scene = create_dataset(cfg.dataset_cfg, log, cfg.work_dir, cfg.debug)
     render_func = create_render_func(cfg.render_cfg)
-    (state_dict, _) = torch.load(cfg.resume_from)
+    (state_dict, _) = torch.load(cfg.resume_from, weights_only=False)
     gaussians.load_state_dict(state_dict, cfg.optim_cfg)
     background = torch.tensor(cfg.dataset_cfg.background, dtype=torch.float32, device="cuda")
 

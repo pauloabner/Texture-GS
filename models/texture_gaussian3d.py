@@ -58,6 +58,7 @@ class TextureGaussian3D(BaseModel):
         self.optimizer_tex = None
         self.scheduler_tex = None
         self.spatial_lr_scale = 0
+        self._lc = torch.empty(0)
         
     def initialize(self, pcd : BasicPointCloud, spatial_lr_scale : float):
         self.spatial_lr_scale = spatial_lr_scale
@@ -73,6 +74,7 @@ class TextureGaussian3D(BaseModel):
             _,
             _,
             _,
+            _,
         ) = state_dict['params']
         
         self.log.info("Number of points at initialisation : {}".format(len(self._xyz)))
@@ -81,6 +83,7 @@ class TextureGaussian3D(BaseModel):
         self._scaling = self._scaling.cuda().requires_grad_(True)
         self._rotation = self._rotation.cuda().requires_grad_(True)
         self._opacity = self._opacity.cuda().requires_grad_(True)
+        self._lc = torch.zeros((self._xyz.shape[0], 1), device="cuda")
         
         
         (state_dict, _) = torch.load(self.cfg.init_uv_map_from)
@@ -166,6 +169,7 @@ class TextureGaussian3D(BaseModel):
                 self._opacity,
                 self._shs,
                 self._texture,
+                self._lc,
             )
         )
 
@@ -178,6 +182,7 @@ class TextureGaussian3D(BaseModel):
             self._opacity,
             self._shs,
             self._texture,
+            self._lc,
         ) = state_dict['params']
         (
             uv_net_state_dict,
@@ -272,7 +277,8 @@ class TextureGaussian3D(BaseModel):
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
-        lc = np.zeros((xyz.shape[0], 1))
+        lc = self._lc.detach().cpu().numpy()
+        uvs = self.get_uvs.detach().cpu().numpy()
 
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
         for i in range(f_dc.shape[1]):
@@ -285,11 +291,13 @@ class TextureGaussian3D(BaseModel):
         for i in range(rotation.shape[1]):
             l.append('rot_{}'.format(i))
         l.append('lc')
+        for i in range(uvs.shape[1]):
+            l.append('uv_{}'.format(i))
 
         dtype_full = [(attribute, 'f4') for attribute in l]
 
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, lc), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation, lc, uvs), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)  

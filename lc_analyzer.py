@@ -140,6 +140,56 @@ def create_chromakey_texture(ply_path, input_texture_path, output_texture_path):
     print(f"Nova textura salva com sucesso em: {output_texture_path}")
     print(f"Total de pixels alterados para Chroma Key: {count}")
 
+def create_mask_texture(ply_path, input_texture_path, output_mask_path):
+    """
+    Gera uma nova imagem de máscara (preto e branco).
+    Os pixels correspondentes a lc=1 assumem a cor branca.
+    Os demais pixels ficam pretos.
+    """
+    if not os.path.exists(ply_path):
+        print(f"Erro: Arquivo {ply_path} não encontrado.")
+        return
+    if not os.path.exists(input_texture_path):
+        print(f"Erro: Textura original {input_texture_path} não encontrada para referência de tamanho.")
+        return
+
+    print(f"Carregando dados para gerar máscara binária...")
+    plydata = PlyData.read(ply_path)
+    vertices = plydata['vertex']
+    
+    # Usamos a imagem original apenas para obter as dimensões h e w
+    ref_img = cv2.imread(input_texture_path)
+    h, w, _ = ref_img.shape
+    res = h // 3
+
+    # Iniciar com uma imagem totalmente preta
+    mask_img = np.zeros((h, w, 3), dtype=np.uint8)
+
+    lc = vertices['lc']
+    uvs = np.stack([vertices['uv_0'], vertices['uv_1'], vertices['uv_2']], axis=1)
+    scales = np.stack([vertices['scale_0'], vertices['scale_1'], vertices['scale_2']], axis=1)
+
+    for i in range(len(vertices)):
+        if lc[i] == 1:
+            face_idx, px, py = map_vector_to_atlas_pixel(uvs[i], res)
+            max_scale = np.exp(scales[i]).max()
+            radius = int(max_scale * res * 2.0)
+            radius = max(1, radius)
+
+            if 0 <= py < h and 0 <= px < w:
+                # Onde for lc=1, pintamos de branco (255, 255, 255)
+                cv2.circle(mask_img, (px, py), radius, (255, 255, 255), -1)
+
+    # Garante que apenas a área da cruz do cubemap seja considerada (limpa sangramentos nas bordas)
+    layout_mask = np.zeros((h, w), dtype=np.uint8)
+    layout_mask[0:res, res:2*res] = 255
+    layout_mask[res:2*res, 0:w] = 255
+    layout_mask[2*res:3*res, res:2*res] = 255
+    mask_img = cv2.bitwise_and(mask_img, mask_img, mask=layout_mask)
+
+    cv2.imwrite(output_mask_path, mask_img)
+    print(f"Máscara binária salva com sucesso em: {output_mask_path}")
+
 def map_vector_to_atlas_pixel(v, res):
     """
     Converte um vetor direção 3D em coordenadas de pixel em um atlas 3x4.
@@ -182,6 +232,68 @@ def map_vector_to_atlas_pixel(v, res):
     offset_x, offset_y = face_offsets[face]
     return face, offset_x + lx, offset_y + ly
 
+def apply_external_texture_by_mask(ply_path, input_texture_path, external_texture_path, output_path):
+    """
+    Aplica uma textura externa sobre a textura original usando a lógica de lc=1 do PLY.
+    Redimensiona a textura externa se as dimensões forem diferentes da máscara.
+    """
+    if not all(os.path.exists(p) for p in [ply_path, input_texture_path, external_texture_path]):
+        print("Erro: Um ou mais arquivos de entrada não foram encontrados.")
+        return
+
+    # 1. Carregar texturas
+    original_img = cv2.imread(input_texture_path)
+    external_img = cv2.imread(external_texture_path)
+    h, w, _ = original_img.shape
+
+    # 2. Redimensionar textura externa se necessário
+    if external_img.shape[0] != h or external_img.shape[1] != w:
+        print(f"Redimensionando textura externa de {external_img.shape[:2]} para {(h, w)}...")
+        external_img = cv2.resize(external_img, (w, h), interpolation=cv2.INTER_LANCZOS4)
+
+    # 3. Gerar a máscara baseada no PLY (lc=1)
+    print("Gerando máscara de aplicação...")
+    plydata = PlyData.read(ply_path)
+    vertices = plydata['vertex']
+    res = h // 3
+    
+    # Máscara binária (começa preta)
+    mask_img = np.zeros((h, w, 3), dtype=np.uint8)
+    
+    lc = vertices['lc']
+    uvs = np.stack([vertices['uv_0'], vertices['uv_1'], vertices['uv_2']], axis=1)
+    scales = np.stack([vertices['scale_0'], vertices['scale_1'], vertices['scale_2']], axis=1)
+
+    for i in range(len(vertices)):
+        if lc[i] == 1:
+            _, px, py = map_vector_to_atlas_pixel(uvs[i], res)
+            max_scale = np.exp(scales[i]).max()
+            radius = int(max_scale * res * 2.0)
+            radius = max(1, radius)
+
+            if 0 <= py < h and 0 <= px < w:
+                cv2.circle(mask_img, (px, py), radius, (255, 255, 255), -1)
+
+    # Limpeza do layout do cubemap
+    layout_mask = np.zeros((h, w), dtype=np.uint8)
+    layout_mask[0:res, res:2*res] = 255
+    layout_mask[res:2*res, 0:w] = 255
+    layout_mask[2*res:3*res, res:2*res] = 255
+    mask_img = cv2.bitwise_and(mask_img, mask_img, mask=layout_mask)
+
+    # 4. Operação de "Convolução"/Blending
+    # Onde a máscara é branca (255), usamos a textura externa.
+    # Onde é preta (0), mantemos a original.
+    mask_bool = mask_img == 255
+    result_img = np.where(mask_bool, external_img, original_img)
+
+    # Salvar resultado
+    if not os.path.exists(os.path.dirname(output_path)):
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        
+    cv2.imwrite(output_path, result_img)
+    print(f"Textura combinada salva com sucesso em: {output_path}")
+
 if __name__ == "__main__":
     # Altere para o caminho do seu arquivo salvo
     path_to_ply = "output/texture_gaussian3d/2026-04-24_15-50-35/pcds/15000.ply"
@@ -192,10 +304,18 @@ if __name__ == "__main__":
     path_output_texture = "output/texture_chromakey.png"
 
     # 1. Modifica 20% dos pontos (agrupados por proximidade) para lc=1 e salva
-    modify_and_save_lc_proximal(path_to_ply, path_modified_ply, ratio=0.2)
+    modify_and_save_lc_proximal(path_to_ply, path_modified_ply, ratio=0.01)
 
     # 2. Cria a nova textura com efeito Chroma Key nos pontos lc=1
     create_chromakey_texture(path_modified_ply, path_input_texture, path_output_texture)
 
-    # 3. Analisar o arquivo modificado (opcional)
-    analyze_texture_gs_ply(path_modified_ply, face_resolution=1024)
+    # 3. Gera a máscara P&B
+    create_mask_texture(path_modified_ply, path_input_texture, "output/mask.png")
+
+    # 4. Aplica textura externa baseada na máscara
+    path_external_tex = "assets/textures/white-marble-texture-close-up.jpg"
+    path_combined_out = "output/combined_texture.png"
+    apply_external_texture_by_mask(path_modified_ply, path_input_texture, path_external_tex, path_combined_out)
+
+    # 5. Analisar o arquivo modificado (opcional)
+    #analyze_texture_gs_ply(path_modified_ply, face_resolution=1024)

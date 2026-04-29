@@ -140,7 +140,7 @@ def create_chromakey_texture(ply_path, input_texture_path, output_texture_path):
     print(f"Nova textura salva com sucesso em: {output_texture_path}")
     print(f"Total de pixels alterados para Chroma Key: {count}")
 
-def create_mask_texture(ply_path, input_texture_path, output_mask_path):
+def create_mask_texture(ply_path, input_texture_path, output_mask_path, reference_ply_path=None, coord_precision=6):
     """
     Gera uma nova imagem de máscara (preto e branco).
     Os pixels correspondentes a lc=1 assumem a cor branca.
@@ -165,21 +165,66 @@ def create_mask_texture(ply_path, input_texture_path, output_mask_path):
     # Iniciar com uma imagem totalmente preta
     mask_img = np.zeros((h, w, 3), dtype=np.uint8)
 
-    lc = vertices['lc']
-    uvs = np.stack([vertices['uv_0'], vertices['uv_1'], vertices['uv_2']], axis=1)
-    scales = np.stack([vertices['scale_0'], vertices['scale_1'], vertices['scale_2']], axis=1)
+    # Verificar se as propriedades necessárias existem no arquivo PLY de entrada
+    available_props = [p.name for p in vertices.properties]
+    has_lc = 'lc' in available_props
 
+    if has_lc:
+        lc = vertices['lc']
+        uvs = np.stack([vertices['uv_0'], vertices['uv_1'], vertices['uv_2']], axis=1)
+        scales = np.stack([vertices['scale_0'], vertices['scale_1'], vertices['scale_2']], axis=1)
+        # Garante que as propriedades UV e scale existam se 'lc' estiver presente, pois são usadas diretamente
+        required_uv_scale = ['uv_0', 'uv_1', 'uv_2', 'scale_0', 'scale_1', 'scale_2']
+        if not all(prop in available_props for prop in required_uv_scale):
+            print(f"Erro: O arquivo de entrada '{ply_path}' possui 'lc' mas não tem todas as propriedades UV e scale necessárias.")
+            return
+    else:
+        if reference_ply_path is None:
+            print("Erro: O arquivo de entrada não possui 'lc' e nenhum reference_ply_path foi fornecido.")
+            return
+        
+        print(f"Carregando arquivo de referência para busca de UVs: {reference_ply_path}")
+        ref_data = PlyData.read(reference_ply_path)['vertex']
+        
+        # Verificar se o arquivo de referência possui as propriedades UV e scale necessárias
+        ref_available_props = [p.name for p in ref_data.properties]
+        ref_required_uv_scale = ['uv_0', 'uv_1', 'uv_2', 'scale_0', 'scale_1', 'scale_2']
+        if not all(prop in ref_available_props for prop in ref_required_uv_scale):
+            print(f"Erro: O arquivo de referência '{reference_ply_path}' não possui todas as propriedades UV e scale necessárias.")
+            return
+
+        # Criar dicionário para busca rápida por coordenadas (XYZ arredondados para evitar erros de precisão)
+        lookup = { (round(v['x'], coord_precision), round(v['y'], coord_precision), round(v['z'], coord_precision)): 
+                   (np.array([v['uv_0'], v['uv_1'], v['uv_2']]), 
+                    np.array([v['scale_0'], v['scale_1'], v['scale_2']])) 
+                   for v in ref_data }
+
+    skipped_points_count = 0
     for i in range(len(vertices)):
-        if lc[i] == 1:
-            face_idx, px, py = map_vector_to_atlas_pixel(uvs[i], res)
-            max_scale = np.exp(scales[i]).max()
-            radius = int(max_scale * res * 2.0)
-            radius = max(1, radius)
+        if has_lc:
+            if lc[i] != 1: continue
+            uv_vec, scale_vec = uvs[i], scales[i]
+        else:
+            coord = (round(vertices['x'][i], coord_precision), round(vertices['y'][i], coord_precision), round(vertices['z'][i], coord_precision))
+            if coord not in lookup:
+                skipped_points_count += 1
+                continue
+            uv_vec, scale_vec = lookup[coord]
 
-            if 0 <= py < h and 0 <= px < w:
-                # Onde for lc=1, pintamos de branco (255, 255, 255)
-                cv2.circle(mask_img, (px, py), radius, (255, 255, 255), -1)
+        face_idx, px, py = map_vector_to_atlas_pixel(uv_vec, res)
+        max_scale = np.exp(scale_vec).max()
+        # Calcula o raio baseado na escala (mesma lógica da create_chromakey_texture)
+        radius = int(max_scale * res * 2.0)
+        radius = max(1, radius)
 
+        if 0 <= py < h and 0 <= px < w:
+            # Onde for lc=1, pintamos de branco (255, 255, 255)
+            cv2.circle(mask_img, (px, py), radius, (255, 255, 255), -1)
+
+    if not has_lc and skipped_points_count > 0:
+        print(f"Aviso: {skipped_points_count} de {len(vertices)} pontos do arquivo de entrada (sem 'lc') não foram encontrados no arquivo de referência para obter UVs/scales. Isso pode resultar em uma máscara incompleta ou preta.")
+        if skipped_points_count == len(vertices):
+            print("Sugestão: Verifique se as coordenadas XYZ no arquivo de entrada correspondem às do arquivo de referência, ou considere ajustar a precisão do arredondamento.")
     # Garante que apenas a área da cruz do cubemap seja considerada (limpa sangramentos nas bordas)
     layout_mask = np.zeros((h, w), dtype=np.uint8)
     layout_mask[0:res, res:2*res] = 255
@@ -232,60 +277,34 @@ def map_vector_to_atlas_pixel(v, res):
     offset_x, offset_y = face_offsets[face]
     return face, offset_x + lx, offset_y + ly
 
-def apply_external_texture_by_mask(ply_path, input_texture_path, external_texture_path, output_path):
+def apply_external_texture_by_mask(input_texture_path, mask_path, external_texture_path, output_path):
     """
-    Aplica uma textura externa sobre a textura original usando a lógica de lc=1 do PLY.
-    Redimensiona a textura externa se as dimensões forem diferentes da máscara.
+    Aplica uma textura externa sobre a original baseada em um arquivo de máscara.
+    Se o pixel da máscara for preto, mantém a original.
+    Se o pixel da máscara for branco, usa a textura externa.
     """
-    if not all(os.path.exists(p) for p in [ply_path, input_texture_path, external_texture_path]):
+    if not all(os.path.exists(p) for p in [input_texture_path, mask_path, external_texture_path]):
         print("Erro: Um ou mais arquivos de entrada não foram encontrados.")
         return
 
     # 1. Carregar texturas
     original_img = cv2.imread(input_texture_path)
+    mask_img = cv2.imread(mask_path)
     external_img = cv2.imread(external_texture_path)
     h, w, _ = original_img.shape
 
-    # 2. Redimensionar textura externa se necessário
+    # 2. Redimensionar textura externa e máscara para as dimensões da original
     if external_img.shape[0] != h or external_img.shape[1] != w:
         print(f"Redimensionando textura externa de {external_img.shape[:2]} para {(h, w)}...")
         external_img = cv2.resize(external_img, (w, h), interpolation=cv2.INTER_LANCZOS4)
 
-    # 3. Gerar a máscara baseada no PLY (lc=1)
-    print("Gerando máscara de aplicação...")
-    plydata = PlyData.read(ply_path)
-    vertices = plydata['vertex']
-    res = h // 3
-    
-    # Máscara binária (começa preta)
-    mask_img = np.zeros((h, w, 3), dtype=np.uint8)
-    
-    lc = vertices['lc']
-    uvs = np.stack([vertices['uv_0'], vertices['uv_1'], vertices['uv_2']], axis=1)
-    scales = np.stack([vertices['scale_0'], vertices['scale_1'], vertices['scale_2']], axis=1)
+    if mask_img.shape[0] != h or mask_img.shape[1] != w:
+        print(f"Redimensionando máscara de {mask_img.shape[:2]} para {(h, w)}...")
+        mask_img = cv2.resize(mask_img, (w, h), interpolation=cv2.INTER_NEAREST)
 
-    for i in range(len(vertices)):
-        if lc[i] == 1:
-            _, px, py = map_vector_to_atlas_pixel(uvs[i], res)
-            max_scale = np.exp(scales[i]).max()
-            radius = int(max_scale * res * 2.0)
-            radius = max(1, radius)
-
-            if 0 <= py < h and 0 <= px < w:
-                cv2.circle(mask_img, (px, py), radius, (255, 255, 255), -1)
-
-    # Limpeza do layout do cubemap
-    layout_mask = np.zeros((h, w), dtype=np.uint8)
-    layout_mask[0:res, res:2*res] = 255
-    layout_mask[res:2*res, 0:w] = 255
-    layout_mask[2*res:3*res, res:2*res] = 255
-    mask_img = cv2.bitwise_and(mask_img, mask_img, mask=layout_mask)
-
-    # 4. Operação de "Convolução"/Blending
-    # Onde a máscara é branca (255), usamos a textura externa.
-    # Onde é preta (0), mantemos a original.
+    # 3. Operação de Blending
     mask_bool = mask_img == 255
-    result_img = np.where(mask_bool, external_img, original_img)
+    result_img = np.where(mask_bool, external_img, original_img).astype(np.uint8)
 
     # Salvar resultado
     if not os.path.exists(os.path.dirname(output_path)):
@@ -298,6 +317,7 @@ if __name__ == "__main__":
     # Altere para o caminho do seu arquivo salvo
     path_to_ply = "output/texture_gaussian3d/2026-04-24_15-50-35/pcds/15000.ply"
     path_modified_ply = "output/texture_gaussian3d/modified.ply"
+    path_modified_ply_no_lc = "/home/abner/work/leo/SVR2026/15000_output.ply"  # Para teste sem 'lc' (opcional)
     
     # Caminhos para as texturas
     path_input_texture = "output/texture.png"  # Sua textura original
@@ -311,11 +331,13 @@ if __name__ == "__main__":
 
     # 3. Gera a máscara P&B
     create_mask_texture(path_modified_ply, path_input_texture, "output/mask.png")
+    create_mask_texture(path_modified_ply_no_lc, path_input_texture, "output/mask_no_lc.png", reference_ply_path=path_to_ply, coord_precision=1)
 
     # 4. Aplica textura externa baseada na máscara
-    path_external_tex = "assets/textures/white-marble-texture-close-up.jpg"
+    path_external_tex = "assets/textures/water.png"
     path_combined_out = "output/combined_texture.png"
-    apply_external_texture_by_mask(path_modified_ply, path_input_texture, path_external_tex, path_combined_out)
+    apply_external_texture_by_mask(path_input_texture, "output/mask.png", path_external_tex, path_combined_out)
+    apply_external_texture_by_mask(path_input_texture, "output/mask_no_lc.png", path_external_tex, "output/combined_texture_no_lc.png")
 
     # 5. Analisar o arquivo modificado (opcional)
     #analyze_texture_gs_ply(path_modified_ply, face_resolution=1024)

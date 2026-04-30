@@ -3,6 +3,25 @@ from plyfile import PlyData, PlyElement
 import os
 import cv2
 
+def quat_to_rot(q):
+    """Converte quatérnio [w, x, y, z] para matriz de rotação 3x3."""
+    norm = np.linalg.norm(q)
+    if norm < 1e-8: return np.eye(3)
+    w, x, y, z = q / norm
+    return np.array([
+        [1 - 2*(y**2 + z**2), 2*(x*y - w*z),     2*(x*z + w*y)],
+        [2*(x*y + w*z),     1 - 2*(x**2 + z**2), 2*(y*z - w*x)],
+        [2*(x*z - w*y),     2*(y*z + w*x),     1 - 2*(x**2 + y**2)]
+    ])
+
+def get_ellipse_params(cov2d, scaling_factor=3.0):
+    """Extrai eixos e ângulo de uma matriz de covariância 2x2 para o OpenCV."""
+    eigenvalues, eigenvectors = np.linalg.eigh(cov2d)
+    axis_major = np.sqrt(max(eigenvalues[1], 1e-8)) * scaling_factor
+    axis_minor = np.sqrt(max(eigenvalues[0], 1e-8)) * scaling_factor
+    angle_rad = np.arctan2(eigenvectors[1, 1], eigenvectors[0, 1])
+    return (axis_major, axis_minor), np.degrees(angle_rad)
+
 def analyze_texture_gs_ply(ply_path, face_resolution=512):
     """
     Analisa o arquivo PLY, filtra por lc == 0 e mapeia para a textura.
@@ -142,9 +161,8 @@ def create_chromakey_texture(ply_path, input_texture_path, output_texture_path):
 
 def create_mask_texture(ply_path, input_texture_path, output_mask_path, reference_ply_path=None, coord_precision=6):
     """
-    Gera uma nova imagem de máscara (preto e branco).
+    Gera uma nova imagem de máscara (preto e branco) utilizando a projeção em elipses.
     Os pixels correspondentes a lc=1 assumem a cor branca.
-    Os demais pixels ficam pretos.
     """
     if not os.path.exists(ply_path):
         print(f"Erro: Arquivo {ply_path} não encontrado.")
@@ -153,19 +171,15 @@ def create_mask_texture(ply_path, input_texture_path, output_mask_path, referenc
         print(f"Erro: Textura original {input_texture_path} não encontrada para referência de tamanho.")
         return
 
-    print(f"Carregando dados para gerar máscara binária...")
+    print(f"Carregando dados para gerar máscara binária (Elipses)...")
     plydata = PlyData.read(ply_path)
     vertices = plydata['vertex']
     
-    # Usamos a imagem original apenas para obter as dimensões h e w
     ref_img = cv2.imread(input_texture_path)
     h, w, _ = ref_img.shape
     res = h // 3
 
-    # Iniciar com uma imagem totalmente preta
     mask_img = np.zeros((h, w, 3), dtype=np.uint8)
-
-    # Verificar se as propriedades necessárias existem no arquivo PLY de entrada
     available_props = [p.name for p in vertices.properties]
     has_lc = 'lc' in available_props
 
@@ -173,59 +187,92 @@ def create_mask_texture(ply_path, input_texture_path, output_mask_path, referenc
         lc = vertices['lc']
         uvs = np.stack([vertices['uv_0'], vertices['uv_1'], vertices['uv_2']], axis=1)
         scales = np.stack([vertices['scale_0'], vertices['scale_1'], vertices['scale_2']], axis=1)
-        # Garante que as propriedades UV e scale existam se 'lc' estiver presente, pois são usadas diretamente
-        required_uv_scale = ['uv_0', 'uv_1', 'uv_2', 'scale_0', 'scale_1', 'scale_2']
-        if not all(prop in available_props for prop in required_uv_scale):
-            print(f"Erro: O arquivo de entrada '{ply_path}' possui 'lc' mas não tem todas as propriedades UV e scale necessárias.")
+        rots = np.stack([vertices['rot_0'], vertices['rot_1'], vertices['rot_2'], vertices['rot_3']], axis=1)
+        
+        required_props = ['uv_0', 'scale_0', 'rot_0']
+        if not all(prop in available_props for prop in required_props):
+            print(f"Erro: O arquivo '{ply_path}' não possui todas as propriedades UV, scale e rot necessárias.")
             return
     else:
         if reference_ply_path is None:
             print("Erro: O arquivo de entrada não possui 'lc' e nenhum reference_ply_path foi fornecido.")
             return
         
-        print(f"Carregando arquivo de referência para busca de UVs: {reference_ply_path}")
+        print(f"Carregando arquivo de referência para busca de dados geométricos: {reference_ply_path}")
         ref_data = PlyData.read(reference_ply_path)['vertex']
-        
-        # Verificar se o arquivo de referência possui as propriedades UV e scale necessárias
-        ref_available_props = [p.name for p in ref_data.properties]
-        ref_required_uv_scale = ['uv_0', 'uv_1', 'uv_2', 'scale_0', 'scale_1', 'scale_2']
-        if not all(prop in ref_available_props for prop in ref_required_uv_scale):
-            print(f"Erro: O arquivo de referência '{reference_ply_path}' não possui todas as propriedades UV e scale necessárias.")
-            return
-
-        # Criar dicionário para busca rápida por coordenadas (XYZ arredondados para evitar erros de precisão)
         lookup = { (round(v['x'], coord_precision), round(v['y'], coord_precision), round(v['z'], coord_precision)): 
                    (np.array([v['uv_0'], v['uv_1'], v['uv_2']]), 
-                    np.array([v['scale_0'], v['scale_1'], v['scale_2']])) 
+                    np.array([v['scale_0'], v['scale_1'], v['scale_2']]),
+                    np.array([v['rot_0'], v['rot_1'], v['rot_2'], v['rot_3']])) 
                    for v in ref_data }
 
     skipped_points_count = 0
     for i in range(len(vertices)):
         if has_lc:
             if lc[i] != 1: continue
-            uv_vec, scale_vec = uvs[i], scales[i]
+            uv_vec, scale_vec, rot_vec = uvs[i], scales[i], rots[i]
         else:
             coord = (round(vertices['x'][i], coord_precision), round(vertices['y'][i], coord_precision), round(vertices['z'][i], coord_precision))
             if coord not in lookup:
                 skipped_points_count += 1
                 continue
-            uv_vec, scale_vec = lookup[coord]
+            uv_vec, scale_vec, rot_vec = lookup[coord]
 
-        face_idx, px, py = map_vector_to_atlas_pixel(uv_vec, res)
-        max_scale = np.exp(scale_vec).max()
-        # Calcula o raio baseado na escala (mesma lógica da create_chromakey_texture)
-        radius = int(max_scale * res * 2.0)
-        radius = max(1, radius)
+        # 1. Mapeamento no Atlas Global (usa o layout do cube_map)
+        face_idx, px, py = map_vector_to_atlas_pixel(uv_vec.copy(), res)
 
-        if 0 <= py < h and 0 <= px < w:
-            # Onde for lc=1, pintamos de branco (255, 255, 255)
-            cv2.circle(mask_img, (px, py), radius, (255, 255, 255), -1)
+        # 2. Covariância 3D: Sigma = R S S^T R^T
+        R = quat_to_rot(rot_vec)
+        S = np.diag(np.exp(scale_vec))
+        Sigma = (R @ S) @ (R @ S).T
+
+        # 3. Matrizes de Projeção P e Offset Local da face baseado na map_vector_to_atlas_pixel
+        if face_idx == 0:   # Right (F0)
+            P = np.array([[0, 0, -1], [0, -1, 0]])
+            offset_x, offset_y = 2*res, res
+        elif face_idx == 1: # Left (F1)
+            P = np.array([[0, 0, 1], [0, -1, 0]])
+            offset_x, offset_y = 0, res
+        elif face_idx == 2: # Top (F2)
+            P = np.array([[1, 0, 0], [0, 0, 1]])
+            offset_x, offset_y = res, 0
+        elif face_idx == 3: # Bottom (F3)
+            P = np.array([[1, 0, 0], [0, 0, -1]])
+            offset_x, offset_y = res, 2*res
+        elif face_idx == 4: # Front (F4)
+            P = np.array([[1, 0, 0], [0, -1, 0]])
+            offset_x, offset_y = res, res
+        elif face_idx == 5: # Back (F5)
+            P = np.array([[-1, 0, 0], [0, -1, 0]])
+            offset_x, offset_y = 3*res, res
+        else: continue
+
+        # 4. Projetar Covariância e extrair parâmetros
+        mag = np.max(np.abs(uv_vec)) + 1e-8
+        cov2d = (P @ Sigma @ P.T) / (mag * mag)
+        
+        # Fator de escala 3.0 engloba 99% da distribuição da Gaussiana
+        (s_major, s_minor), angle = get_ellipse_params(cov2d, scaling_factor=3.0)
+        
+        # UV vai de -1 a 1 (2 unidades). Multiplicamos por res/2.0
+        axes = (int(s_major * res), int(s_minor * res))
+        axes = (max(1, axes[0]), max(1, axes[1]))
+
+        # 5. Desenhar elipse em uma máscara temporária da Face para evitar sangramento para vizinhos
+        temp_face = np.zeros((res, res, 3), dtype=np.uint8)
+        local_px = px - offset_x
+        local_py = py - offset_y
+        
+        cv2.ellipse(temp_face, (local_px, local_py), axes, angle, 0, 360, (255, 255, 255), -1)
+        
+        # Faz um 'OR' binário apenas na região da respectiva face no atlas principal
+        mask_img[offset_y:offset_y+res, offset_x:offset_x+res] = cv2.bitwise_or(
+            mask_img[offset_y:offset_y+res, offset_x:offset_x+res], temp_face)
 
     if not has_lc and skipped_points_count > 0:
-        print(f"Aviso: {skipped_points_count} de {len(vertices)} pontos do arquivo de entrada (sem 'lc') não foram encontrados no arquivo de referência para obter UVs/scales. Isso pode resultar em uma máscara incompleta ou preta.")
-        if skipped_points_count == len(vertices):
-            print("Sugestão: Verifique se as coordenadas XYZ no arquivo de entrada correspondem às do arquivo de referência, ou considere ajustar a precisão do arredondamento.")
-    # Garante que apenas a área da cruz do cubemap seja considerada (limpa sangramentos nas bordas)
+        print(f"Aviso: {skipped_points_count} pontos não foram encontrados no arquivo de referência.")
+
+    # Garante que apenas a área da cruz do cubemap seja considerada
     layout_mask = np.zeros((h, w), dtype=np.uint8)
     layout_mask[0:res, res:2*res] = 255
     layout_mask[res:2*res, 0:w] = 255
@@ -312,6 +359,7 @@ def apply_external_texture_by_mask(input_texture_path, mask_path, external_textu
         
     cv2.imwrite(output_path, result_img)
     print(f"Textura combinada salva com sucesso em: {output_path}")
+
 
 if __name__ == "__main__":
     # Altere para o caminho do seu arquivo salvo

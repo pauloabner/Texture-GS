@@ -2,6 +2,9 @@ import numpy as np
 from plyfile import PlyData, PlyElement
 import os
 import cv2
+import torch
+import yaml
+from addict import Dict
 
 def quat_to_rot(q):
     """Converte quatérnio [w, x, y, z] para matriz de rotação 3x3."""
@@ -360,6 +363,49 @@ def apply_external_texture_by_mask(input_texture_path, mask_path, external_textu
     cv2.imwrite(output_path, result_img)
     print(f"Textura combinada salva com sucesso em: {output_path}")
 
+def save_ply_with_combined_texture(
+    ply_path_to_save,
+    combined_texture_path,
+    model_config_path,
+    model_checkpoint_path
+):
+    """
+    Loads a TextureGaussian3D model, applies combined texture colors to f_dc,
+    and saves the PLY.
+    """
+    if not os.path.exists(model_config_path):
+        print(f"Erro: Arquivo de configuração do modelo {model_config_path} não encontrado.")
+        return
+    if not os.path.exists(model_checkpoint_path):
+        print(f"Erro: Checkpoint do modelo {model_checkpoint_path} não encontrado.")
+        return
+    if not os.path.exists(combined_texture_path):
+        print(f"Erro: Textura combinada {combined_texture_path} não encontrada.")
+        return
+
+    print(f"Carregando configuração do modelo de: {model_config_path}")
+    with open(model_config_path, 'r') as f:
+        cfg_dict = yaml.load(f, Loader=yaml.FullLoader)
+    cfg = Dict(cfg_dict)
+
+    # Mock log, work_dir, debug for create_model
+    mock_log = type('MockLog', (object,), {'info': print, 'warning': print})()
+    mock_work_dir = './tmp_lc_analyzer' # Temporary directory
+    mock_debug = False
+
+    # Import create_model here to avoid circular dependency if TextureGaussian3D imports lc_analyzer
+    from models import create_model
+
+    print("Instanciando modelo TextureGaussian3D...")
+    gaussians = create_model(cfg.model_cfg, mock_log, mock_work_dir, mock_debug)
+
+    print(f"Carregando checkpoint do modelo de: {model_checkpoint_path}")
+    state_dict, _ = torch.load(model_checkpoint_path, weights_only=False)
+    gaussians.load_state_dict(state_dict, cfg.optim_cfg)
+    
+    print(f"Salvando PLY com textura combinada em: {ply_path_to_save}")
+    gaussians.save_point_cloud(ply_path_to_save, combined_texture_path=combined_texture_path)
+    print("PLY salvo com sucesso.")
 
 if __name__ == "__main__":
     # Altere para o caminho do seu arquivo salvo
@@ -389,3 +435,15 @@ if __name__ == "__main__":
 
     # 5. Analisar o arquivo modificado (opcional)
     #analyze_texture_gs_ply(path_modified_ply, face_resolution=1024)
+
+    # 6. Salvar PLY com a textura combinada
+    # Ajuste os caminhos para o seu arquivo de configuração e checkpoint do modelo
+    path_to_model_config = "configs/texture_gaussian3d.yaml" # Exemplo de config
+    path_to_model_checkpoint = "/home/abner/work/Texture-GS/output/texture_gaussian3d/2026-04-24_15-50-35/checkpoints/15000.pth" # Exemplo de checkpoint (baixe de https://drive.google.com/drive/folders/1ZrvFAU2DuiWGw3Y68EFbiXJq8rUa-Hu?usp=drive_link)
+    path_output_ply_with_texture = "output/combined_texture_ply.ply"
+    save_ply_with_combined_texture(
+        path_output_ply_with_texture,
+        path_combined_out, # This is the output from apply_external_texture_by_mask
+        path_to_model_config,
+        path_to_model_checkpoint
+    )

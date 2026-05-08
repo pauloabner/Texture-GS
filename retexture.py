@@ -85,6 +85,11 @@ def visualize(cfg, log):
                 cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
             )
 
+    # Salva o arquivo PLY com o modelo retexturizado
+    ply_output_path = os.path.join(cfg.work_dir, "retextured_model.ply")
+    log.info(f"Salvando modelo PLY retexturizado em: {ply_output_path}")
+    gaussians.save_point_cloud(ply_output_path)
+
 def parse_args():
     parser = ArgumentParser(description="Textured Gaussian Splatting")
     parser.add_argument('config', help='path to config file')

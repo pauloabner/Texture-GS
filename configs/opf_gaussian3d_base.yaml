@@ -11,7 +11,7 @@ dataset_cfg:
   resolution: 2
 
 model_cfg:
-  type: Gaussian3D
+  type: OPFGaussian3D
   sh_degree: 3
 
 render_cfg:

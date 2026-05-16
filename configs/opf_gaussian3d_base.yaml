@@ -21,6 +21,7 @@ render_cfg:
 
 train_cfg:
   num_iterations: 30000
+  weight_precision_interval: 10
   visual_iters: [5000, 10000, 15000, 20000, 25000, 30000]
   ckpt_iters: [5000, 10000, 15000, 20000, 25000, 30000]
   densification_interval: 100

@@ -27,7 +27,7 @@ Como o container utiliza volumes mapeados, você deve configurar os caminhos den
 
 ---
 
-### Configurações Importantes nos YAMLs:
+### Configurações Importantes nos YAMLs
 
 * **`data_root_dir` ou similar**: Deve apontar para pastas dentro de `/data/...` (ex: `/data/DTU/scan24`).
 * **`init_from`: Deve apontar para `output/<RUN_NAME>/gaussian3d_base/checkpoints/30000.pth`. O código criará uma pasta com o nome do seu `--run_name` dentro deste diretório.

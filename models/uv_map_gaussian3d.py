@@ -51,7 +51,6 @@ class UVMapGaussian3D(BaseModel):
             _,
             _,
             _,
-            _, # Adicionado para _lc
         ) = state_dict['params']
         
         

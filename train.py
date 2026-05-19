@@ -201,10 +201,12 @@ def parse_args():
     return args
 
 def add_args_to_cfg(args, cfg):
-    run_name = os.path.splitext(os.path.basename(args.config))[
-        0] if args.run_name is None else args.run_name
-    cfg.work_dir = os.path.abspath(os.path.join(
-        args.workspace, run_name, datetime.now().strftime(r'%Y-%m-%d_%H-%M-%S')))
+    base_name = os.path.splitext(os.path.basename(args.config))[ 0]
+    if args.run_name is None:
+        cfg.work_dir = os.path.abspath(os.path.join(args.workspace, base_name, datetime.now().strftime(r'%Y-%m-%d_%H-%M-%S')))
+    else:
+        run_name = args.run_name
+        cfg.work_dir = os.path.abspath(os.path.join(args.workspace, run_name, base_name))
     cfg.resume_from = args.resume_from    
     cfg.debug = args.debug
     cfg.detect_anomaly = args.detect_anomaly

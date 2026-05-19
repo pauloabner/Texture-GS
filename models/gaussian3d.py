@@ -170,7 +170,7 @@ class Gaussian3D(BaseModel):
 
     def save_point_cloud(self, path):
         xyz = self._xyz.detach().cpu().numpy()
-        
+
         normals = np.zeros_like(xyz)
         f_dc = self._features_dc.detach().flatten(start_dim=1).cpu().numpy()
         f_rest = self._features_rest.detach().flatten(start_dim=1).cpu().numpy()
@@ -192,7 +192,7 @@ class Gaussian3D(BaseModel):
 
         dtype_full = [(attribute, 'f4') for attribute in l]
         elements = np.empty(xyz.shape[0], dtype=dtype_full)
-        attributes = np.concatenate((xyz,), axis=1)
+        attributes = np.concatenate((xyz, normals, f_dc, f_rest, opacities, scale, rotation), axis=1)
         elements[:] = list(map(tuple, attributes))
         el = PlyElement.describe(elements, 'vertex')
         PlyData([el]).write(path)

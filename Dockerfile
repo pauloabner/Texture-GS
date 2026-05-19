@@ -29,10 +29,18 @@ RUN python -m pip install --no-cache-dir torch torchvision --index-url https://d
 RUN python -m pip install --no-cache-dir ninja fvcore iopath
 
 WORKDIR /app
-COPY . .
 
+COPY requirements.txt .
+COPY nvdiffrast/ ./nvdiffrast/
 # Instalação das bibliotecas que exigem compilação
 RUN python -m pip install --no-cache-dir -r requirements.txt --no-build-isolation
 # RUN python -m pip install --no-cache-dir tiny-cuda-nn/bindings/torch/. --no-build-isolation
 RUN python -m pip install --no-cache-dir nvdiffrast/. --no-build-isolation
 RUN python -m pip install "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+
+COPY . .
+
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+ENTRYPOINT ["/bin/bash", "/app/entrypoint.sh"]

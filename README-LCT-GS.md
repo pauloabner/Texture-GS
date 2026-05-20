@@ -53,3 +53,41 @@ docker run --rm \
   --gpus all \
   --name texture-gs \
   texture-gs
+```
+
+---
+
+## 4. Segunda Parte do Experimento: Retexturização Localizada
+
+Após a conclusão do fluxo inicial, a segunda parte do experimento consiste em isolar uma região específica do modelo para aplicar uma nova textura.
+
+### 4.1. Seleção da Nuvem de Pontos
+
+O primeiro passo é obter a nuvem de pontos gerada ao final do processo anterior.
+
+Localize o arquivo de saída: output/<RUN_NAME>/texture_gaussian3d/pcds/40000.ply.
+
+Utilizando o software de edição de nuvens de pontos, selecione apenas a região de interesse (os pontos) que deseja retexturizar.
+
+Salve essa seleção como um novo arquivo .ply (por exemplo, selected_region.ply) dentro do seu diretório de output para que fique acessível ao container.
+
+### 4.2. Configurando o YAML
+
+Abra o arquivo de configuração configs/localized_custom_gs.yaml e ajuste as variáveis necessárias. A principal configuração nesta etapa é informar ao sistema onde está a nuvem de pontos selecionada:
+
+plyfile_gs_selected_path: Deve apontar para o caminho da nuvem de pontos selecionada no passo anterior (ex: /app/output/<RUN_NAME>/selected_region.ply).
+
+### 4.3. Executando o Container para Retexturização
+
+Para rodar esta segunda parte, o fluxo padrão do entrypoint.sh não é utilizado. Deve executar o container informando o script retexture.sh como argumento, garantindo o mapeamento dos mesmos volumes:
+
+```bash
+docker run --rm \
+  -e RUN_NAME=EXPERIMENTO_01 \
+  -v /mnt/data_dtu:/data \
+  -v /home/user/outputs:/app/output \
+  -v ./configs:/app/configs \
+  --gpus all \
+  --name texture-gs-retexture \
+  texture-gs retexture.sh
+```

@@ -8,6 +8,7 @@ from plyfile import PlyData, PlyElement
 from utils.general import inverse_sigmoid, get_expon_lr_func
 from losses import *
 import cv2
+import os
 from torch.autograd.functional import jacobian
 
 from .modules.uv_net import UVNet, InvUVNet
@@ -261,17 +262,59 @@ class TextureGaussian3D(BaseModel):
         self._grad_uv = self.get_grad_uvs
 
     @torch.no_grad()
-    def save_point_cloud(self, path):
+    def save_point_cloud(self, path, combined_texture_path=None):
         xyz = self._xyz.detach().cpu().numpy()
         normals = np.zeros_like(xyz)
-        # Texture-GS usa uma textura global para a cor base (DC),
-        # salvamos zeros para f_dc para manter compatibilidade com visualizadores.
-        f_dc = np.zeros((xyz.shape[0], 3))
+        uvs = self.get_uvs.detach().cpu().numpy()
+
+        # Inicializa cores f_dc (em formato SH)
+        f_dc_rgb = np.zeros((xyz.shape[0], 3))
+
+        if combined_texture_path and os.path.exists(combined_texture_path):
+            img_bgr = cv2.imread(combined_texture_path)
+            if img_bgr is not None:
+                img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+                h, w, _ = img_rgb.shape
+                res = h // 3
+                face_offsets = {2: (res, 0), 1: (0, res), 4: (res, res), 0: (2*res, res), 5: (3*res, res), 3: (res, 2*res)}
+
+                for i in range(len(xyz)):
+                    v = uvs[i].copy()
+                    abs_v = np.abs(v)
+                    mag = np.max(abs_v)
+                    v /= (mag + 1e-8)
+                    if abs_v[0] == mag:
+                        face, (u_c, v_c) = (0 if v[0] > 0 else 1), ((-v[2], -v[1]) if v[0] > 0 else (v[2], -v[1]))
+                    elif abs_v[1] == mag:
+                        face, (u_c, v_c) = (2 if v[1] > 0 else 3), ((v[0], v[2]) if v[1] > 0 else (v[0], -v[2]))
+                    else:
+                        face, (u_c, v_c) = (4 if v[2] > 0 else 5), ((v[0], -v[1]) if v[2] > 0 else (-v[0], -v[1]))
+                    lx, ly = int(((u_c + 1) / 2) * (res - 1)), int(((v_c + 1) / 2) * (res - 1))
+                    ox, oy = face_offsets[face]
+                    f_dc_rgb[i] = img_rgb[oy + ly, ox + lx]
+        else:
+            # Caso não haja textura externa, amostra da textura interna aprendida
+            rgb_tex = sh02rgb(self._texture).detach().cpu().numpy()
+            res = rgb_tex.shape[1]
+            for i in range(len(xyz)):
+                v = uvs[i].copy()
+                abs_v = np.abs(v)
+                mag = np.max(abs_v)
+                v /= (mag + 1e-8)
+                if abs_v[0] == mag:
+                    face, (u_c, v_c) = (0 if v[0] > 0 else 1), ((-v[2], -v[1]) if v[0] > 0 else (v[2], -v[1]))
+                elif abs_v[1] == mag:
+                    face, (u_c, v_c) = (2 if v[1] > 0 else 3), ((v[0], v[2]) if v[1] > 0 else (v[0], -v[2]))
+                else:
+                    face, (u_c, v_c) = (4 if v[2] > 0 else 5), ((v[0], -v[1]) if v[2] > 0 else (-v[0], -v[1]))
+                lx, ly = int(((u_c + 1) / 2) * (res - 1)), int(((v_c + 1) / 2) * (res - 1))
+                f_dc_rgb[i] = rgb_tex[face, ly, lx]
+
+        f_dc = rgb2sh0(f_dc_rgb)
         f_rest = self._shs.detach().flatten(start_dim=1).cpu().numpy() if self._shs is not None else np.empty((xyz.shape[0], 0))
         opacities = self._opacity.detach().cpu().numpy()
         scale = self._scaling.detach().cpu().numpy()
         rotation = self._rotation.detach().cpu().numpy()
-        uvs = self.get_uvs.detach().cpu().numpy()
 
         l = ['x', 'y', 'z', 'nx', 'ny', 'nz']
         for i in range(f_dc.shape[1]):

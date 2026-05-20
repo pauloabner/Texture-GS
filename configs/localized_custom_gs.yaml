@@ -1,0 +1,4 @@
+input:
+  run_name: OWL
+  plyfile_gs_selected_path: "output/OWL/localized_custom_gs/splats_selected.ply"
+  texture_filepath: "assets/textures/water.png"

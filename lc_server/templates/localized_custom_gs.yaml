@@ -2,4 +2,4 @@ input:
   run_name: <RUN_NAME> 
   dtu_selected: <DTU_SELECTED>
   plyfile_gs_selected_path: "output/<RUN_NAME>/localized_custom_gs/splats_selected.ply"
-  texture_filepath: "output/<RUN_NAME>/texture_gaussian3d/<TEXTURE_FILE_NAME>"
+  texture_filepath: "output/<RUN_NAME>/localized_custom_gs/external_texture.jpg"

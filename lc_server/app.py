@@ -1,6 +1,5 @@
 import os
 import subprocess
-import uuid
 import shutil
 from flask import Flask, request, render_template, redirect, url_for, send_from_directory
 from werkzeug.utils import secure_filename
@@ -41,19 +40,20 @@ def get_logs_list():
 
     logs_data = []
     for filename in files:
-        # log_filename = f'{run_name}_{run_id}.txt'
         try:
             name_without_ext = filename[:-4]
-            parts = name_without_ext.rsplit('_', 1)
-            if len(parts) == 2:
-                run_name, run_id = parts
-                # Caminho: uploads/<run_id>/outputs/<run_name>/texture_gaussian3d/pcds/40000.ply
-                ply_path = os.path.join(app.config['UPLOAD_FOLDER'], run_id, 'outputs', run_name, 'texture_gaussian3d', 'pcds', '40000.ply')
+            # Trata logs normais e logs de RETEXTURE
+            if name_without_ext.startswith('RETEXTURE_'):
+                run_name = name_without_ext.replace('RETEXTURE_', '')
+            else:
+                run_name = name_without_ext
+
+            if run_name:
+                # Novo Caminho consolidado: uploads/outputs/<run_name>/texture_gaussian3d/pcds/40000.ply
+                ply_path = os.path.join(app.config['UPLOAD_FOLDER'], 'outputs', run_name, 'texture_gaussian3d', 'pcds', '40000.ply')
                 exists = os.path.exists(ply_path)
                 logs_data.append({
                     'filename': filename,
-                    'run_name': run_name,
-                    'run_id': run_id,
                     'ply_exists': exists
                 })
             else:
@@ -73,18 +73,14 @@ def datasets_page():
 
 @app.route('/start_from_dataset', methods=['POST'])
 def start_from_dataset():
-    run_name = request.form.get('run_name', 'DEFAULT_EXPERIMENT')
+    run_name = secure_filename(request.form.get('run_name', 'DEFAULT_EXPERIMENT'))
     dataset_path = request.form.get('dataset_path')
 
     if not dataset_path:
         return "Nenhum dataset selecionado", 400
 
-    # 1. Gerar um ID único para a execução e definir caminhos
-    run_id = str(uuid.uuid4())
-    run_dir = os.path.join(app.config['UPLOAD_FOLDER'], run_id)
-    
-    # Pasta de destino conforme solicitado: outputs/<RUN_NAME>
-    target_dir = os.path.join(run_dir, 'outputs', run_name)
+    # 1. Definir caminhos baseados na estrutura uploads/outputs/<RUN_NAME>
+    target_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'outputs', run_name)
     os.makedirs(target_dir, exist_ok=True)
 
     # 2. Copiar arquivos da pasta 'template' para dentro da pasta do RUN_NAME
@@ -109,7 +105,7 @@ def start_from_dataset():
         # 4. Execução do Docker (Idêntico ao processo do index)
         HOST_DATA_DIR = '/mnt/abner/data_dtu'
         abs_target_dir = os.path.abspath(target_dir) # Onde os YAMLs foram copiados
-        abs_host_output_dir = os.path.abspath(os.path.join(run_dir, 'outputs'))
+        abs_host_output_dir = os.path.dirname(abs_target_dir) # Pai da pasta do experimento (uploads/outputs)
 
         docker_command = [
             'docker', 'run', '--rm',
@@ -119,11 +115,11 @@ def start_from_dataset():
             '-v', f'{abs_host_output_dir}:/app/output',
             '-v', f'{abs_target_dir}:/app/configs', # Monta a pasta com os YAMLs processados
             '--gpus', 'all',
-            '--name', f'texture-gs-{run_id}',
+            '--name', f'texture-gs-{run_name}',
             'texture-gs'
         ]
 
-        log_filename = f'{run_name}_{run_id}.txt'
+        log_filename = f'{run_name}.txt'
         log_filepath = os.path.join(app.config['LOG_FOLDER'], log_filename)
 
         try:
@@ -158,11 +154,10 @@ def start_from_dataset():
 @app.route('/run_texture_gs', methods=['POST'])
 def run_texture_gs():
     if request.method == 'POST':
-        run_name = request.form.get('run_name', 'DEFAULT_EXPERIMENT')
+        run_name = secure_filename(request.form.get('run_name', 'DEFAULT_EXPERIMENT'))
         
-        # Create a unique directory for this run's configs
-        run_id = str(uuid.uuid4())
-        run_config_dir = os.path.join(app.config['UPLOAD_FOLDER'], run_id)
+        # Estrutura consolidada: uploads/outputs/<run_name>
+        run_config_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'outputs', run_name)
         os.makedirs(run_config_dir, exist_ok=True)
 
         config_files_uploaded = []
@@ -191,12 +186,10 @@ def run_texture_gs():
         # Define host paths for data and output, these should match your Docker setup
         # IMPORTANT: Adjust these paths to your actual host system's data and output directories
         HOST_DATA_DIR = '/mnt/abner/data_dtu'
-        host_output_dir = os.path.join(run_config_dir, 'outputs')
-        os.makedirs(host_output_dir, exist_ok=True)
         
         # Get the absolute path of the run_config_dir for Docker volume mounting
         abs_run_config_dir = os.path.abspath(run_config_dir)
-        abs_host_output_dir = os.path.abspath(host_output_dir)
+        abs_host_output_dir = os.path.dirname(abs_run_config_dir) # Pai da pasta do experimento
 
         # Construct the Docker command
         docker_command = [
@@ -207,11 +200,11 @@ def run_texture_gs():
             '-v', f'{abs_host_output_dir}:/app/output',
             '-v', f'{abs_run_config_dir}:/app/configs', # Mount the uploaded configs
             '--gpus', 'all',
-            '--name', f'texture-gs-{run_id}', # Unique name for the container
+            '--name', f'texture-gs-{run_name}',
             'texture-gs'
         ]
 
-        log_filename = f'{run_name}_{run_id}.txt'
+        log_filename = f'{run_name}.txt'
         log_filepath = os.path.join(app.config['LOG_FOLDER'], log_filename)
 
         try:
@@ -250,31 +243,38 @@ def run_texture_gs():
 def get_log(filename):
     return send_from_directory(app.config['LOG_FOLDER'], filename)
 
-@app.route('/download_ply/<run_id>/<run_name>')
-def download_ply(run_id, run_name):
-    # Reconstrói o caminho para o arquivo 40000.ply dentro da pasta de outputs do run_id
-    directory = os.path.join(app.config['UPLOAD_FOLDER'], run_id, 'outputs', run_name, 'texture_gaussian3d', 'pcds')
+@app.route('/download_ply/<run_name>')
+def download_ply(run_name):
+    # Reconstrói o caminho para o arquivo 40000.ply
+    directory = os.path.join(app.config['UPLOAD_FOLDER'], 'outputs', run_name, 'texture_gaussian3d', 'pcds')
     filename = '40000.ply'
     return send_from_directory(directory, filename, as_attachment=True)
 
-@app.route('/delete_run/<run_id>/<filename>')
-def delete_run(run_id, filename):
+@app.route('/delete_run/<filename>')
+def delete_run(filename):
     # 1. Remove o arquivo de log
     log_path = os.path.join(app.config['LOG_FOLDER'], filename)
+    
+    # Extrai o run_name do log (removendo RETEXTURE_ se houver e a extensão .txt)
+    run_name = filename[:-4]
+    if run_name.startswith('RETEXTURE_'):
+        run_name = run_name.replace('RETEXTURE_', '')
+
     if os.path.exists(log_path):
         os.remove(log_path)
-    # 2. Remove a pasta de processamento (uploads/<run_id>)
-    if run_id and run_id != 'none':
-        run_dir = os.path.join(app.config['UPLOAD_FOLDER'], run_id)
+    
+    # 2. Remove a pasta de processamento (uploads/<run_name>)
+    if run_name:
+        run_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'outputs', run_name)
         if os.path.exists(run_dir):
             shutil.rmtree(run_dir)
     return redirect(url_for('index'))
 
-@app.route('/upload_localized/<run_id>/<run_name>', methods=['POST'])
-def upload_localized(run_id, run_name):
+@app.route('/upload_localized/<run_name>', methods=['POST'])
+def upload_localized(run_name):
     # Define o diretório de destino dentro da pasta de outputs do experimento
-    # Caminho: uploads/<run_id>/outputs/<run_name>/localized_custom_gs/
-    target_dir = os.path.join(app.config['UPLOAD_FOLDER'], run_id, 'outputs', run_name, 'localized_custom_gs')
+    # Caminho: uploads/outputs/<run_name>/localized_custom_gs/
+    target_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'outputs', run_name, 'localized_custom_gs')
     os.makedirs(target_dir, exist_ok=True)
 
     ply_file = request.files.get('selected_ply')
@@ -283,7 +283,7 @@ def upload_localized(run_id, run_name):
 
     if ply_file and tex_file and config_file:
         # Configurações para a execução do Docker de Retexturização
-        run_config_dir = os.path.join(app.config['UPLOAD_FOLDER'], run_id)
+        run_config_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'outputs', run_name)
 
         # Salva o YAML de configuração localizado na pasta de configs do run
         config_path = os.path.join(run_config_dir, 'localized_custom_gs.yaml')
@@ -298,8 +298,8 @@ def upload_localized(run_id, run_name):
         tex_path = os.path.join(target_dir, 'external_texture' + tex_ext)
         tex_file.save(tex_path)
 
-        abs_run_config_dir = os.path.abspath(run_config_dir)
-        abs_host_output_dir = os.path.abspath(os.path.join(run_config_dir, 'outputs'))
+        abs_run_config_dir = os.path.abspath(run_config_dir) # Onde está o localized_custom_gs.yaml
+        abs_host_output_dir = os.path.dirname(abs_run_config_dir) # Pai da pasta do experimento
         HOST_DATA_DIR = '/mnt/abner/data_dtu'
 
         docker_command = [
@@ -310,11 +310,11 @@ def upload_localized(run_id, run_name):
             '-v', f'{abs_host_output_dir}:/app/output',
             '-v', f'{abs_run_config_dir}:/app/configs',
             '--gpus', 'all',
-            '--name', f'texture-gs-retexture-{run_id}',
+            '--name', f'texture-gs-retexture-{run_name}',
             'texture-gs', 'retexture.sh'
         ]
 
-        log_filename = f'RETEXTURE_{run_name}_{run_id}.txt'
+        log_filename = f'RETEXTURE_{run_name}.txt'
         log_filepath = os.path.join(app.config['LOG_FOLDER'], log_filename)
 
         try:
@@ -341,5 +341,6 @@ def upload_localized(run_id, run_name):
 
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+    os.makedirs(os.path.join(UPLOAD_FOLDER, 'outputs'), exist_ok=True)
     os.makedirs(LOG_FOLDER, exist_ok=True)
     app.run(debug=True, host='0.0.0.0', port=5000)

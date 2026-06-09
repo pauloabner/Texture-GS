@@ -1,7 +1,7 @@
 import os
 import subprocess
 import shutil
-from flask import Flask, request, render_template, redirect, url_for, send_from_directory
+from flask import Flask, request, render_template, redirect, url_for, send_from_directory, jsonify
 from werkzeug.utils import secure_filename
 
 # Por padrão, o Flask procura templates na pasta './templates'.
@@ -78,14 +78,21 @@ def get_logs_list():
                 # Novo Caminho consolidado: uploads/outputs/<run_name>/texture_gaussian3d/pcds/40000.ply
                 ply_path = os.path.join(app.config['UPLOAD_FOLDER'], 'outputs', run_name, 'texture_gaussian3d', 'pcds', '40000.ply')
                 exists = os.path.exists(ply_path)
+
+                # Verifica se existe o arquivo de retexturização combinada
+                combined_ply_path = os.path.join(app.config['UPLOAD_FOLDER'], 'outputs', run_name, 'localized_custom_gs', 'combined_texture_ply.ply')
+                combined_exists = os.path.exists(combined_ply_path)
+
                 logs_data.append({
                     'filename': filename,
-                    'ply_exists': exists
+                    'run_name': run_name,
+                    'ply_exists': exists,
+                    'combined_ply_exists': combined_exists,
                 })
             else:
-                logs_data.append({'filename': filename, 'ply_exists': False})
+                logs_data.append({'filename': filename, 'run_name': None, 'ply_exists': False, 'combined_ply_exists': False})
         except Exception:
-            logs_data.append({'filename': filename, 'ply_exists': False})
+            logs_data.append({'filename': filename, 'run_name': None, 'ply_exists': False, 'combined_ply_exists': False})
     
     return logs_data
 
@@ -225,6 +232,13 @@ def download_ply(run_name):
     filename = '40000.ply'
     return send_from_directory(directory, filename, as_attachment=True)
 
+@app.route('/download_combined_ply/<run_name>')
+def download_combined_ply(run_name):
+    # Reconstrói o caminho para o arquivo combined_texture_ply.ply gerado na retexturização
+    directory = os.path.join(app.config['UPLOAD_FOLDER'], 'outputs', run_name, 'localized_custom_gs')
+    filename = 'combined_texture_ply.ply'
+    return send_from_directory(directory, filename, as_attachment=True)
+
 @app.route('/delete_run/<filename>')
 def delete_run(filename):
     # 1. Remove o arquivo de log
@@ -271,6 +285,7 @@ def upload_localized(run_name):
         # Salva a textura (preservando a extensão original)
         tex_ext = os.path.splitext(tex_file.filename)[1]
         tex_path = os.path.join(target_dir, 'external_texture' + tex_ext)
+        
         tex_file.save(tex_path)
 
         abs_run_config_dir = os.path.abspath(run_config_dir) # Onde está o localized_custom_gs.yaml
@@ -288,7 +303,7 @@ def upload_localized(run_name):
             'texture-gs', 'retexture.sh'
         ]
 
-        log_filename = f'RETEXTURE_{run_name}.txt'
+        log_filename = f'{run_name}.txt'
         success = _run_docker_container(docker_command, log_filename, "Docker Retexture Command")
 
         if success:
@@ -297,6 +312,82 @@ def upload_localized(run_name):
             return f"Erro ao executar retexturização. Veja o log: <a href='{url_for('get_log', filename=log_filename)}'>{log_filename}</a>", 500
 
     return "Arquivos ausentes", 400
+
+@app.route('/api/v1/retexture', methods=['POST'])
+def api_upload_localized():
+    """
+    Endpoint de API para retexturização localizada.
+    Espera: file_selected (PLY), file_texture (Imagem), run_name (Form Data)
+    Assume que localized_custom_gs.yaml já existe na pasta do RUN_NAME.
+    """
+    run_name = request.form.get('run_name')
+    if not run_name:
+        return jsonify({"error": "O campo 'run_name' é obrigatório para identificar o experimento."}), 400
+    
+    run_name = secure_filename(run_name)
+    run_config_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'outputs', run_name)
+    
+    # Verifica se o experimento base existe
+    if not os.path.exists(run_config_dir):
+        return jsonify({"error": f"Experimento '{run_name}' não encontrado. Certifique-se de que o RUN_NAME está correto."}), 404
+
+    # Verifica se o arquivo de configuração obrigatório já está lá
+    if not os.path.exists(os.path.join(run_config_dir, 'localized_custom_gs.yaml')):
+        return jsonify({"error": f"Arquivo 'localized_custom_gs.yaml' não encontrado em {run_name}. Envie-o primeiro via interface ou garanta sua existência."}), 400
+
+    ply_file = request.files.get('file_selected')
+    tex_file = request.files.get('file_texture')
+
+    if not (ply_file and tex_file):
+        return jsonify({"error": "Arquivos 'file_selected' (PLY) e 'file_texture' (PNG/JPG) são obrigatórios."}), 400
+
+    # Define diretório de destino para os novos inputs
+    target_dir = os.path.join(run_config_dir, 'localized_custom_gs')
+    os.makedirs(target_dir, exist_ok=True)
+
+    # Salva os arquivos recebidos
+    ply_file.save(os.path.join(target_dir, 'splats_selected.ply'))
+    tex_ext = os.path.splitext(tex_file.filename)[1]
+    tex_filename = 'external_texture' + tex_ext
+    tex_file.save(os.path.join(target_dir, tex_filename))
+
+    # Substitui o placeholder no YAML de configuração
+    config_path = os.path.join(run_config_dir, 'localized_custom_gs.yaml')
+    if os.path.exists(config_path):
+        with open(config_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+        new_content = content.replace('<EXTERNAL_TEXTURE_FILENAME>', tex_filename)
+        with open(config_path, 'w', encoding='utf-8') as f:
+            f.write(new_content)
+
+    # Configurações para a execução do Docker
+    abs_run_config_dir = os.path.abspath(run_config_dir)
+    abs_host_output_dir = os.path.dirname(abs_run_config_dir)
+
+    docker_command = [
+        'docker', 'run', '--rm',
+        '--user', f'{os.getuid()}:{os.getgid()}',
+        '-e', f'RUN_NAME={run_name}',
+        '-v', f"{app.config['HOST_DATA_DIR']}:/data",
+        '-v', f'{abs_host_output_dir}:/app/output',
+        '-v', f'{abs_run_config_dir}:/app/configs',
+        '--gpus', 'all',
+        '--name', f'texture-gs-retexture-api-{run_name}',
+        'texture-gs', 'retexture.sh'
+    ]
+
+    log_filename = f'{run_name}.txt'
+    success = _run_docker_container(docker_command, log_filename, "API Docker Retexture Command")
+
+    if success:
+        return jsonify({
+            "status": "success",
+            "message": "Processo de retexturização iniciado com sucesso via API.",
+            "log_url": url_for('get_log', filename=log_filename, _external=True),
+            "combined_ply_url": url_for('download_combined_ply', run_name=run_name, _external=True)
+        }), 200
+    else:
+        return jsonify({"error": "Falha ao executar o container Docker. Verifique os logs."}), 500
 
 if __name__ == '__main__':
     os.makedirs(UPLOAD_FOLDER, exist_ok=True)

@@ -7,6 +7,9 @@
                     <a href="{{ url_for('get_log', filename=log.filename) }}" target="_blank">{{ log.filename }}</a>
                     {% if log.ply_exists %}
                         - <a href="{{ url_for('download_ply', run_name=log.run_name) }}" style="color: green; font-weight: bold;">[Download 40000.ply]</a>
+                        {% if log.combined_ply_exists %}
+                            - <a href="{{ url_for('download_combined_ply', run_name=log.run_name) }}" style="color: blue; font-weight: bold;">[Download Combined PLY]</a>
+                        {% endif %}
                     {% else %}
                         - <span style="color: #888; font-style: italic;">(Aguardando processamento...)</span>
                     {% endif %}

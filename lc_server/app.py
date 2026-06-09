@@ -16,12 +16,38 @@ LOG_FOLDER = os.path.join(os.path.dirname(__file__), 'logs')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['LOG_FOLDER'] = LOG_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024  # 100 MB max upload size
+app.config['HOST_DATA_DIR'] = '/mnt/abner/data_dtu'
 
 ALLOWED_EXTENSIONS = {'yaml'}
 
+def _run_docker_container(docker_command, log_filename, description):
+    """Função auxiliar para executar o Docker e gerenciar logs."""
+    log_filepath = os.path.join(app.config['LOG_FOLDER'], log_filename)
+    try:
+        with open(log_filepath, 'w') as log_file:
+            process = subprocess.run(
+                docker_command,
+                capture_output=True,
+                text=True,
+                check=False
+            )
+            log_file.write(f"--- {description} ---\n")
+            log_file.write(" ".join(docker_command) + "\n\n")
+            log_file.write("--- Standard Output ---\n")
+            log_file.write(process.stdout)
+            log_file.write("\n--- Standard Error ---\n")
+            log_file.write(process.stderr)
+            log_file.write(f"\n--- Exit Code: {process.returncode} ---\n")
+        return True
+    except Exception as e:
+        if os.path.exists(log_filepath):
+            with open(log_filepath, 'a') as log_file:
+                log_file.write(f"\n--- Error during execution: {e} ---\n")
+        return False
+
 def get_datasets_list():
     """Lista as pastas dentro do diretório de dados para o combo box."""
-    data_path = '/mnt/abner/data_dtu'
+    data_path = app.config['HOST_DATA_DIR']
     try:
         return sorted([d for d in os.listdir(data_path) if os.path.isdir(os.path.join(data_path, d))])
     except Exception:
@@ -103,7 +129,6 @@ def start_from_dataset():
                         f.write(new_content)
 
         # 4. Execução do Docker (Idêntico ao processo do index)
-        HOST_DATA_DIR = '/mnt/abner/data_dtu'
         abs_target_dir = os.path.abspath(target_dir) # Onde os YAMLs foram copiados
         abs_host_output_dir = os.path.dirname(abs_target_dir) # Pai da pasta do experimento (uploads/outputs)
 
@@ -111,7 +136,7 @@ def start_from_dataset():
             'docker', 'run', '--rm',
             '--user', f'{os.getuid()}:{os.getgid()}',
             '-e', f'RUN_NAME={run_name}',
-            '-v', f'{HOST_DATA_DIR}:/data',
+            '-v', f"{app.config['HOST_DATA_DIR']}:/data",
             '-v', f'{abs_host_output_dir}:/app/output',
             '-v', f'{abs_target_dir}:/app/configs', # Monta a pasta com os YAMLs processados
             '--gpus', 'all',
@@ -120,34 +145,12 @@ def start_from_dataset():
         ]
 
         log_filename = f'{run_name}.txt'
-        log_filepath = os.path.join(app.config['LOG_FOLDER'], log_filename)
+        success = _run_docker_container(docker_command, log_filename, "Docker Command (from Dataset Page)")
 
-        try:
-            with open(log_filepath, 'w') as log_file:
-                process = subprocess.run(
-                    docker_command,
-                    capture_output=True,
-                    text=True,
-                    check=False
-                )
-                log_file.write("--- Docker Command (from Dataset Page) ---\n")
-                log_file.write(" ".join(docker_command) + "\n\n")
-                log_file.write("--- Standard Output ---\n")
-                log_file.write(process.stdout)
-                log_file.write("\n--- Standard Error ---\n")
-                log_file.write(process.stderr)
-                log_file.write(f"\n--- Exit Code: {process.returncode} ---\n")
-            
-            return render_template(
-                'datasets.html', 
-                log_link=url_for('get_log', filename=log_filename),
-                logs=get_logs_list(),
-                datasets=get_datasets_list()
-            )
-        except Exception as e:
-            with open(log_filepath, 'a') as log_file:
-                log_file.write(f"\n--- Error during execution: {e} ---\n")
-            return f"Erro ao executar Docker: {e}. Veja o log: <a href='{url_for('get_log', filename=log_filename)}'>{log_filename}</a>", 500
+        if success:
+            return render_template('datasets.html', log_link=url_for('get_log', filename=log_filename), logs=get_logs_list(), datasets=get_datasets_list())
+        else:
+            return f"Erro ao executar Docker. Veja o log: <a href='{url_for('get_log', filename=log_filename)}'>{log_filename}</a>", 500
 
     return "Erro: Pasta de templates não encontrada", 500
 
@@ -185,7 +188,6 @@ def run_texture_gs():
 
         # Define host paths for data and output, these should match your Docker setup
         # IMPORTANT: Adjust these paths to your actual host system's data and output directories
-        HOST_DATA_DIR = '/mnt/abner/data_dtu'
         
         # Get the absolute path of the run_config_dir for Docker volume mounting
         abs_run_config_dir = os.path.abspath(run_config_dir)
@@ -196,7 +198,7 @@ def run_texture_gs():
             'docker', 'run', '--rm',
             '--user', f'{os.getuid()}:{os.getgid()}',
             '-e', f'RUN_NAME={run_name}',
-            '-v', f'{HOST_DATA_DIR}:/data',
+            '-v', f"{app.config['HOST_DATA_DIR']}:/data",
             '-v', f'{abs_host_output_dir}:/app/output',
             '-v', f'{abs_run_config_dir}:/app/configs', # Mount the uploaded configs
             '--gpus', 'all',
@@ -205,39 +207,12 @@ def run_texture_gs():
         ]
 
         log_filename = f'{run_name}.txt'
-        log_filepath = os.path.join(app.config['LOG_FOLDER'], log_filename)
+        success = _run_docker_container(docker_command, log_filename, "Docker Command (from Upload Page)")
 
-        try:
-            with open(log_filepath, 'w') as log_file:
-                process = subprocess.run(
-                    docker_command,
-                    capture_output=True,
-                    text=True,
-                    check=False # Do not raise an exception for non-zero exit codes
-                )
-                log_file.write("--- Docker Command ---\n")
-                log_file.write(" ".join(docker_command) + "\n\n")
-                log_file.write("--- Standard Output ---\n")
-                log_file.write(process.stdout)
-                log_file.write("\n--- Standard Error ---\n")
-                log_file.write(process.stderr)
-                log_file.write(f"\n--- Exit Code: {process.returncode} ---\n")
-            
-            # Comentado para depuração: os arquivos de configuração agora permanecem 
-            # na pasta uploads/<run_id> para que você possa conferir o conteúdo.
-            # for f in config_files_uploaded:
-            #     if os.path.exists(f):
-            #         os.remove(f)
-
-            return render_template(
-                'index.html', 
-                log_link=url_for('get_log', filename=log_filename),
-                logs=get_logs_list()
-            )
-        except Exception as e:
-            with open(log_filepath, 'a') as log_file:
-                log_file.write(f"\n--- Error during execution: {e} ---\n")
-            return f"An error occurred: {e}. Check log for details: <a href='{url_for('get_log', filename=log_filename)}'>{log_filename}</a>", 500
+        if success:
+            return render_template('index.html', log_link=url_for('get_log', filename=log_filename), logs=get_logs_list())
+        else:
+            return f"Erro ao executar Docker. Veja o log: <a href='{url_for('get_log', filename=log_filename)}'>{log_filename}</a>", 500
 
 @app.route('/logs/<filename>')
 def get_log(filename):
@@ -300,13 +275,12 @@ def upload_localized(run_name):
 
         abs_run_config_dir = os.path.abspath(run_config_dir) # Onde está o localized_custom_gs.yaml
         abs_host_output_dir = os.path.dirname(abs_run_config_dir) # Pai da pasta do experimento
-        HOST_DATA_DIR = '/mnt/abner/data_dtu'
 
         docker_command = [
             'docker', 'run', '--rm',
             '--user', f'{os.getuid()}:{os.getgid()}',
             '-e', f'RUN_NAME={run_name}',
-            '-v', f'{HOST_DATA_DIR}:/data',
+            '-v', f"{app.config['HOST_DATA_DIR']}:/data",
             '-v', f'{abs_host_output_dir}:/app/output',
             '-v', f'{abs_run_config_dir}:/app/configs',
             '--gpus', 'all',
@@ -315,27 +289,12 @@ def upload_localized(run_name):
         ]
 
         log_filename = f'RETEXTURE_{run_name}.txt'
-        log_filepath = os.path.join(app.config['LOG_FOLDER'], log_filename)
+        success = _run_docker_container(docker_command, log_filename, "Docker Retexture Command")
 
-        try:
-            with open(log_filepath, 'w') as log_file:
-                process = subprocess.run(docker_command, capture_output=True, text=True, check=False)
-                log_file.write("--- Docker Retexture Command ---\n")
-                log_file.write(" ".join(docker_command) + "\n\n")
-                log_file.write("--- Standard Output ---\n")
-                log_file.write(process.stdout)
-                log_file.write("\n--- Standard Error ---\n")
-                log_file.write(process.stderr)
-                log_file.write(f"\n--- Exit Code: {process.returncode} ---\n")
-            
-            return render_template(
-                'index.html', 
-                log_link=url_for('get_log', filename=log_filename), 
-                logs=get_logs_list(),
-                datasets=get_datasets_list()
-            )
-        except Exception as e:
-            return f"Erro ao executar retexturização: {e}", 500
+        if success:
+            return render_template('index.html', log_link=url_for('get_log', filename=log_filename), logs=get_logs_list(), datasets=get_datasets_list())
+        else:
+            return f"Erro ao executar retexturização. Veja o log: <a href='{url_for('get_log', filename=log_filename)}'>{log_filename}</a>", 500
 
     return "Arquivos ausentes", 400
 

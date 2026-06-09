@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Texture-GS Docker Runner</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        form div { margin-bottom: 10px; }
+        label { display: inline-block; width: 200px; }
+        input[type="text"], input[type="file"] { width: 300px; padding: 5px; }
+        input[type="submit"] { padding: 10px 20px; cursor: pointer; }
+        .log-list { margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; }
+        .log-output { margin-top: 20px; padding: 10px; border: 1px solid #ccc; background-color: #f9f9f9; }
+    </style>
+</head>
+<body>
+    <h1>Run Texture-GS Docker Experiment</h1>
+
+    <form action="/run_texture_gs" method="post" enctype="multipart/form-data">
+        <div>
+            <label for="run_name">Experiment Name (RUN_NAME):</label>
+            <input type="text" id="run_name" name="run_name" value="EXPERIMENTO_01" required>
+        </div>
+        
+        <p><a href="{{ url_for('datasets_page') }}">Ver Datasets Disponíveis</a></p>
+
+        <h2>Upload Configuration Files (.yaml)</h2>
+        <p>Please upload the four required YAML configuration files:</p>
+
+        <div>
+            <label for="gaussian3d_base.yaml">gaussian3d_base.yaml:</label>
+            <input type="file" id="gaussian3d_base.yaml" name="gaussian3d_base.yaml" accept=".yaml" required>
+        </div>
+        <div>
+            <label for="uv_map.yaml">uv_map.yaml:</label>
+            <input type="file" id="uv_map.yaml" name="uv_map.yaml" accept=".yaml" required>
+        </div>
+        <div>
+            <label for="texture_gaussian3d.yaml">texture_gaussian3d.yaml:</label>
+            <input type="file" id="texture_gaussian3d.yaml" name="texture_gaussian3d.yaml" accept=".yaml" required>
+        </div>
+
+        <input type="submit" value="Start Docker Run">
+    </form>
+
+    {% if log_link %}
+        <div class="log-output">
+            <h2>Docker Command Output:</h2>
+            <p>View the full log here: <a href="{{ log_link }}" target="_blank">{{ log_link.split('/')[-1] }}</a></p>
+        </div>
+    {% endif %}
+
+    {% include 'logs_history.html' %}
+
+</body>
+</html>

@@ -1,0 +1,5 @@
+input:
+  run_name: <RUN_NAME> 
+  dtu_selected: <DTU_SELECTED>
+  plyfile_gs_selected_path: "output/<RUN_NAME>/localized_custom_gs/splats_selected.ply"
+  texture_filepath: "output/<RUN_NAME>/localized_custom_gs/<EXTERNAL_TEXTURE_FILENAME>"

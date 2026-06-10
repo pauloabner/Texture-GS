@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Datasets Disponíveis</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        form div { margin-bottom: 10px; }
+        label { display: inline-block; width: 200px; font-weight: bold; }
+        input[type="text"] { width: 300px; padding: 5px; }
+        .log-list { margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Datasets no Servidor</h1>
+
+    <form action="{{ url_for('start_from_dataset') }}" method="post">
+        {% include 'dataset_selector.html' %}
+        
+        <div>
+            <label for="run_name">Experiment Name (RUN_NAME):</label>
+            <input type="text" id="run_name" name="run_name" value="EXPERIMENTO_01" required>
+        </div>
+
+        <div>
+            <input type="submit" value="Start" style="padding: 10px 20px; cursor: pointer;">
+        </div>
+    </form>
+
+    {% include 'logs_history.html' %}
+
+    <p style="margin-top: 20px;"><a href="{{ url_for('index') }}">Voltar para o Início</a></p>
+</body>
+</html>

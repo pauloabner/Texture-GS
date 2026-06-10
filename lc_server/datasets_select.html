@@ -1,0 +1,9 @@
+<div class="dataset-selection">
+    <label for="dataset_name">Selecionar Dataset (Data DTU):</label>
+    <select id="dataset_name" name="dataset_name" style="width: 312px; padding: 5px;">
+        <option value="" disabled selected>Selecione um dataset...</option>
+        {% for dataset in datasets %}
+            <option value="{{ dataset }}">{{ dataset }}</option>
+        {% endfor %}
+    </select>
+</div>

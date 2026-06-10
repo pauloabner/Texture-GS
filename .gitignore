@@ -180,3 +180,6 @@ cython_debug/
 
 # viewer
 *.ini
+
+
+lc_server/uploads

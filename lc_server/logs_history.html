@@ -1,0 +1,43 @@
+<div class="log-list">
+    <h2>Histórico de Logs</h2>
+    {% if logs %}
+        <ul>
+            {% for log in logs %}
+                <li>
+                    <a href="{{ url_for('get_log', filename=log.filename) }}" target="_blank">{{ log.filename }}</a>
+                    {% if log.ply_exists %}
+                        - <a href="{{ url_for('download_ply', run_name=log.run_name) }}" style="color: green; font-weight: bold;">[Download 40000.ply]</a>
+                        {% if log.combined_ply_exists %}
+                            - <a href="{{ url_for('download_combined_ply', run_name=log.run_name) }}" style="color: blue; font-weight: bold;">[Download Combined PLY]</a>
+                        {% endif %}
+                    {% else %}
+                        - <span style="color: #888; font-style: italic;">(Aguardando processamento...)</span>
+                    {% endif %}
+                    <a href="{{ url_for('delete_run', filename=log.filename) }}" 
+                       onclick="return confirm('Tem certeza que deseja apagar permanentemente este log e todos os arquivos gerados?')" 
+                       style="color: #d9534f; margin-left: 15px; text-decoration: none; font-weight: bold;">[🗑️ Deletar]</a>
+
+                    {% if log.ply_exists %}
+                        <div style="margin: 10px 0 20px 20px; padding: 10px; border: 1px dashed #aaa; background-color: #f0fdf4; border-radius: 5px;">
+                            <strong style="font-size: 0.9em; color: #333;">Retexturização Localizada:</strong>
+                            <form action="{{ url_for('upload_localized', run_name=log.run_name) }}" method="post" enctype="multipart/form-data" style="margin-top: 5px;">
+                                <label style="width: auto; font-size: 0.8em;">PLY Selecionado:</label>
+                                <input type="file" name="selected_ply" accept=".ply" required style="font-size: 0.8em; width: auto;">
+                                
+                                <label style="width: auto; font-size: 0.8em; margin-left: 10px;">Config (YAML):</label>
+                                <input type="file" name="localized_custom_gs.yaml" accept=".yaml" required style="font-size: 0.8em; width: auto;">
+                                
+                                <label style="width: auto; font-size: 0.8em; margin-left: 10px;">Textura (PNG/JPG):</label>
+                                <input type="file" name="texture_img" accept=".png,.jpg,.jpeg" required style="font-size: 0.8em; width: auto;">
+                                
+                                <button type="submit" style="margin-left: 10px; padding: 2px 10px; cursor: pointer; font-size: 0.8em;">Retexturizar</button>
+                            </form>
+                        </div>
+                    {% endif %}
+                </li>
+            {% endfor %}
+        </ul>
+    {% else %}
+        <p>Nenhum log encontrado na pasta.</p>
+    {% endif %}
+</div>

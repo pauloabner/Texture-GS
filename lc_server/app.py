@@ -1,6 +1,7 @@
 import os
 import subprocess
 import shutil
+import yaml
 from flask import Flask, request, render_template, redirect, url_for, send_from_directory, jsonify
 from werkzeug.utils import secure_filename
 
@@ -351,14 +352,16 @@ def api_upload_localized():
     tex_filename = 'external_texture' + tex_ext
     tex_file.save(os.path.join(target_dir, tex_filename))
 
-    # Substitui o placeholder no YAML de configuração
+    # Atualiza o parâmetro texture_filepath no YAML de configuração
     config_path = os.path.join(run_config_dir, 'localized_custom_gs.yaml')
     if os.path.exists(config_path):
         with open(config_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-        new_content = content.replace('<EXTERNAL_TEXTURE_FILENAME>', tex_filename)
-        with open(config_path, 'w', encoding='utf-8') as f:
-            f.write(new_content)
+            config_data = yaml.safe_load(f)
+        
+        if config_data and 'input' in config_data:
+            config_data['input']['texture_filepath'] = f"output/{run_name}/localized_custom_gs/{tex_filename}"
+            with open(config_path, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(config_data, f, default_flow_style=False)
 
     # Configurações para a execução do Docker
     abs_run_config_dir = os.path.abspath(run_config_dir)
